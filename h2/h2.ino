@@ -5,7 +5,7 @@
 // Define your hardware parameters here. Don't remove the ".0" at the end.
 #define ENCODER_STEPS 600.0 // 600 step spindle optical rotary encoder
 #define MOTOR_STEPS 400.0
-#define LEAD_SCREW_HMM 200.0 // 2mm lead screw
+#define LEAD_SCREW_TMM 2000.0 // 2mm lead screw
 
 // Spindle rotary encoder pins. Nano only supports interrupts on D2 and D3.
 // Swap values if the rotation direction is wrong.
@@ -19,10 +19,6 @@
 #define PULSE_DELTA_US round(max(1, 1600.0 / MOTOR_STEPS))
 #define INVERT_STEPPER false // change (true/false) if the carriage moves e.g. "left" when you press "right".
 
-// Pitch shortcut buttons, set to your most used values that should be available within 1 click.
-#define F3_PITCH 10 // 0.1mm
-#define F4_PITCH 100 // 1mm
-#define F5_PITCH 200 // 2mm
 
 // Voltage on A6 when F1-F5 buttons are pressed.
 // If those buttons don't work as expected, uncomment "// Serial.println(value);" in getAnalogButton(),
@@ -44,11 +40,11 @@
 #define LONG_MAX long(2147483647)
 
 #define LOOP_COUNTER_MAX 1500 // 1500 loops without stepper move to start reading buttons
-#define HMMPR_MAX 1000 // 10mm
+#define TMMPR_MAX 10000 // 10mm
 
 // Ratios between spindle and stepper.
-#define ENCODER_TO_STEPPER_STEP_RATIO MOTOR_STEPS / (LEAD_SCREW_HMM * ENCODER_STEPS)
-#define STEPPER_TO_ENCODER_STEP_RATIO LEAD_SCREW_HMM * ENCODER_STEPS / MOTOR_STEPS
+#define ENCODER_TO_STEPPER_STEP_RATIO MOTOR_STEPS / (LEAD_SCREW_TMM * ENCODER_STEPS)   
+#define STEPPER_TO_ENCODER_STEP_RATIO LEAD_SCREW_TMM * ENCODER_STEPS / MOTOR_STEPS		
 
 // If time between encoder ticks is less than this, direction change is not allowed.
 // Effectively this limits direction change to the time when spindle is <20rpm.
@@ -59,7 +55,7 @@
 #define EEPROM_VERSION 1
 
 // To be incremented whenever a measurable improvement is made.
-#define SOFTWARE_VERSION 1
+#define SOFTWARE_VERSION 2
 
 // To be changed whenever a different PCB / encoder / stepper / ... design is used.
 #define HARDWARE_VERSION 2
@@ -91,7 +87,7 @@
 
 #define ADDR_EEPROM_VERSION 0 // takes 1 byte
 #define ADDR_ONOFF 1 // takes 1 byte
-#define ADDR_HMMPR 2 // takes 2 bytes
+#define ADDR_TMMPR 2 // takes 2 bytes
 #define ADDR_POS 4 // takes 4 bytes
 #define ADDR_LEFT_STOP 8 // takes 4 bytes
 #define ADDR_RIGHT_STOP 12 // takes 4 bytes
@@ -100,16 +96,17 @@
 #define ADDR_SHOW_ANGLE 22 // takes 1 byte
 #define ADDR_SHOW_TACHO 23 // takes 1 byte
 #define ADDR_MOVE_STEP 24 // takes 2 bytes
+#define ADDR_UNIT_MODE 26 // takes 2 bytes
 
-#define MOVE_STEP_1 100
-#define MOVE_STEP_2 10
-#define MOVE_STEP_3 1
+#define UNIT_MM 0
+#define UNIT_IN 1
+#define UNIT_TPI 2
 
 #define RPM_UPDATE_THRESHOLD 2
 #define RPM_BULK ENCODER_STEPS
 
 // Uncomment to print out debug info in Serial.
-// #define DEBUG
+//#define DEBUG
 
 // Uncomment to run the self-test of the code instead of the actual program.
 // #define TEST
@@ -145,9 +142,9 @@ bool isOn = false;
 unsigned long resetMillis = 0;
 bool resetOnStartup = false;
 
-int hmmpr = 0; // hundredth of a mm per rotation
-int savedHmmpr = 0; // hmmpr saved in EEPROM
-int hmmprPrevious = 0;
+int tmmpr = 0; // thousandth of a mm per rotation
+int savedTmmpr = 0; // tmmpr saved in EEPROM
+int tmmprPrevious = 0;
 
 long pos = 0; // relative position of the stepper motor, in steps
 long savedPos = 0; // value saved in EEPROM
@@ -189,6 +186,19 @@ int shownRpm = 0;
 int moveStep = 0; // hundredth of a mm
 int savedMoveStep = 0; // moveStep saved in EEPROM
 
+int unitModeIdx = 0;
+int pitchTableIdx=0;
+int moveStepTableIdx=0;
+
+//list of commonly used pitches  if list is less than the array size, end with a 0
+const int pitchTable[3][7] = {{100,1000,2000,0}, {13,254,1270,2540,0}, {3175, 2540,2117,1814,1587,1411, 1270}}; //0.1mm, 1mm, 2mm  / 0.005, 0.01", .05, .1" / 8,10,12,14,16,18,20 tpi
+const int moveStepTable[3][3] ={{10,100,1000}, {13,254,1270}, {13,254,1270}};  //0.01, 0.1, 1.0mm / ~ 0.05in
+const char *showUnit[3] = {"mm", "\"" , "\""};
+const char *pitchUnit[3] = {"mm", "\"" , "tpi"};
+const int unitDiv[3] = {1000,25400,25400};
+const int decimals[3] = {2,3,3};
+
+
 int getApproxRpm() {
   int rpm = 0;
   int diff = spindleEncTimeDiffBulk / RPM_BULK;
@@ -205,9 +215,9 @@ void updateDisplay() {
 #ifndef TEST
   // Avoid updating the LCD when nothing has changed, it flickers.
   int rpm = getApproxRpm();
-  long newLcdHash = (showAngle ? spindlePos : 0) + pos * 2 + hmmpr * 3 + isOn * 4 + leftStop / 5
+  long newLcdHash = (showAngle ? spindlePos : 0) + pos * 2 + tmmpr * 3 + isOn * 4 + leftStop / 5
                     + rightStop / 6 + spindlePosSync * 7 + resetOnStartup * 8 + showAngle * 9
-                    + showTacho * 10 + moveStep * 11 + rpm * 12;
+                    + showTacho * 10 + moveStep * 11 + rpm * 12 + unitModeIdx * 13;
   if (newLcdHash == lcdHash) {
     return;
   }
@@ -217,50 +227,59 @@ void updateDisplay() {
 
   // First row.
   lcd.setCursor(0, 0);
-  lcd.print(isOn ? "ON" : "off");
-  if (leftStop != LONG_MAX && rightStop != LONG_MIN) {
-    lcd.print(" LR");
-  } else if (leftStop != LONG_MAX) {
-    lcd.print(" L");
-  } else if (rightStop != LONG_MIN) {
-    lcd.print("  R");
-  }
-  if (moveStep != MOVE_STEP_1) {
-    lcd.print(" step ");
-    lcd.print(moveStep * 1.0 / 100, 2);
-    lcd.print("mm");
-  }
+  lcd.print(isOn ? "ON " : "OFF");
+ 
+  //if (moveStep != MOVE_STEP_1) {
+    lcd.print(" Step: ");
+    lcd.print(moveStep * 1.0 / unitDiv[unitModeIdx], decimals[unitModeIdx]);
+    lcd.print(showUnit[unitModeIdx]);
+  //}
   if (spindlePosSync) {
     lcd.print(" SYN");
   }
   if (resetOnStartup) {
     lcd.print(" LTW");
   }
+  
+   if (leftStop != LONG_MAX && rightStop != LONG_MIN) {
+    lcd.print(" LR");
+  } else if (leftStop != LONG_MAX) {
+    lcd.print(" L");
+  } else if (rightStop != LONG_MIN) {
+    lcd.print("  R");
+  }
 
   // Second row.
   lcd.setCursor(0, 1);
-  lcd.print("Pitch: ");
-  lcd.print(hmmpr * 1.0 / 100, 2);
-  lcd.print("mm");
+  lcd.print("Pitch:    ");
+  if(unitModeIdx == UNIT_MM || unitModeIdx == UNIT_IN){
+    lcd.print(tmmpr * 1.0 / unitDiv[unitModeIdx], decimals[unitModeIdx]);
+  }
+  else { //tpi
+    lcd.print(25400 / (tmmpr * 1.0), 1);
+  }
+  lcd.print(pitchUnit[unitModeIdx]);
 
   // Third row.
   lcd.setCursor(0, 2);
   lcd.print("Position: ");
-  float posMm = pos * LEAD_SCREW_HMM / MOTOR_STEPS / 100;
-  lcd.print(posMm, 2);
-  lcd.print("mm");
+  lcd.print(pos * LEAD_SCREW_TMM / MOTOR_STEPS / unitDiv[unitModeIdx], decimals[unitModeIdx]);
+  lcd.print(showUnit[unitModeIdx]);
 
   // Fourth row.
   lcd.setCursor(0, 3);
   if (showAngle) {
-    lcd.print("Angle: ");
+    lcd.print("Angle:    ");
     lcd.print(round(((spindlePos % (int) ENCODER_STEPS + (int) ENCODER_STEPS) % (int) ENCODER_STEPS) * 360 / ENCODER_STEPS));
-    lcd.print("deg");
+    lcd.print((char) 223);
   } else if (showTacho) {
-    lcd.print("Tacho: ");
+    lcd.print("Tacho:    ");
     lcd.print(rpm);
     shownRpm = rpm;
     lcd.print("rpm");
+  }
+  else {
+    lcd.print("-- NanoELS H" + String(HARDWARE_VERSION) + " V" + String(SOFTWARE_VERSION) + " --");
   }
 #endif
 }
@@ -369,11 +388,12 @@ void setup() {
     EEPROM.write(ADDR_EEPROM_VERSION, EEPROM_VERSION);
     saveLong(ADDR_LEFT_STOP, savedLeftStop = leftStop = LONG_MAX);
     saveLong(ADDR_RIGHT_STOP, savedRightStop = rightStop = LONG_MIN);
-    saveInt(ADDR_MOVE_STEP, MOVE_STEP_1);
+    saveInt(ADDR_MOVE_STEP, moveStepTable[UNIT_MM][0]);
+    saveInt(ADDR_UNIT_MODE, UNIT_MM);
   }
 
   isOn = EEPROM.read(ADDR_ONOFF) == 1;
-  savedHmmpr = hmmpr = loadInt(ADDR_HMMPR);
+  savedTmmpr = tmmpr = loadInt(ADDR_TMMPR);
   savedPos = pos = loadLong(ADDR_POS);
   savedLeftStop = leftStop = loadLong(ADDR_LEFT_STOP);
   savedRightStop = rightStop = loadLong(ADDR_RIGHT_STOP);
@@ -382,6 +402,7 @@ void setup() {
   savedShowAngle = showAngle = EEPROM.read(ADDR_SHOW_ANGLE) == 1;
   savedShowTacho = showTacho = EEPROM.read(ADDR_SHOW_TACHO) == 1;
   savedMoveStep = moveStep = loadInt(ADDR_MOVE_STEP);
+  //savedUnitMode = unitModeIdx = loadInt(ADDR_UNIT_MODE);
 
   stepperEnable(isOn);
 
@@ -416,8 +437,8 @@ void preventMoveOnStart() {
 
 // Saves all positions in EEPROM, should be called infrequently to reduce EEPROM wear.
 void saveIfChanged() {
-  if (hmmpr != savedHmmpr) {
-    saveInt(ADDR_HMMPR, savedHmmpr = hmmpr);
+  if (tmmpr != savedTmmpr) {
+    saveInt(ADDR_TMMPR, savedTmmpr = tmmpr);
   }
   if (pos != savedPos) {
     saveLong(ADDR_POS, savedPos = pos);
@@ -455,8 +476,8 @@ bool checkAndMarkButtonTime() {
 }
 
 // Loose the thread and mark current physical positions of
-// encoder and stepper as a new 0. To be called when hmmpr changes
-// or ELS is turned on/off. Without this, changing hmmpr will
+// encoder and stepper as a new 0. To be called when tmmpr changes
+// or ELS is turned on/off. Without this, changing tmmpr will
 // result in stepper rushing across the lathe to the new position.
 void markAsZero() {
   noInterrupts();
@@ -472,12 +493,14 @@ void markAsZero() {
   interrupts();
 }
 
-void setHmmpr(int value) {
-  hmmpr = value;
+void setTmmpr(int value) {
+  tmmpr = value;
   markAsZero();
   updateDisplay();
 }
 
+
+//no longer used as version info moved to main screen when mode rpm and angle are both off
 void splashScreen() {
 #ifndef TEST
   lcd.clear();
@@ -494,9 +517,9 @@ void reset() {
   resetOnStartup = false;
   leftStop = LONG_MAX;
   rightStop = LONG_MIN;
-  setHmmpr(0);
-  moveStep = MOVE_STEP_1;
-  splashScreen();
+  setTmmpr(0);
+  moveStep = moveStepTable[0][0];
+  //splashScreen();
 }
 
 // Called when left/right stop restriction is removed while we're on it.
@@ -515,20 +538,39 @@ void setOutOfSync() {
 
 // Check if the - or + buttons are pressed.
 void checkPlusMinusButtons() {
-  // Speed up scrolling when needed.
-  int delta = abs(hmmprPrevious - hmmpr) >= 10 ? 10 : 1;
+
   bool minus = DREAD(B_MINUS) == LOW;
   bool plus = DREAD(B_PLUS) == LOW;
+
+  // Speed up scrolling when needed.
+  int delta=0;
+  if (unitModeIdx == UNIT_MM) delta = abs(tmmprPrevious - tmmpr) >= 1000 ? 1000 : 10; //mm
+  else if (unitModeIdx == UNIT_IN) delta = abs(tmmprPrevious - tmmpr) >= 1270 ? 1270 : 25; //in
+  else {// tpi
+    if (minus ){
+      int tpi = (25400/tmmpr) +1;
+      if (tpi <= 0 && tpi >-3) tpi=3;
+      delta =  abs((25400/ tpi) - tmmpr);
+    }
+    if (plus ){
+      int tpi = (25400/tmmpr) -1;
+      
+      if (tpi < 3) tpi=-3;
+      //Serial.println(tpi);
+      delta =  tmmpr -(25400/ tpi);
+    }
+  } 
+
   if (minus && checkAndMarkButtonTime()) {
-    if (hmmpr > -HMMPR_MAX) {
-      setHmmpr(max(-HMMPR_MAX, hmmpr - delta));
+    if (tmmpr > -TMMPR_MAX) {
+      setTmmpr(max(-TMMPR_MAX, tmmpr - delta));
     }
   } else if (plus && checkAndMarkButtonTime()) {
-    if (hmmpr < HMMPR_MAX) {
-      setHmmpr(min(HMMPR_MAX, hmmpr + delta));
+    if (tmmpr < TMMPR_MAX) {
+      setTmmpr(min(TMMPR_MAX, tmmpr + delta));
     }
   } else if (!minus && !plus) {
-    hmmprPrevious = hmmpr;
+    tmmprPrevious = tmmpr;
   }
 }
 
@@ -609,15 +651,15 @@ void checkMoveButtons() {
   }
   int sign = left ? 1 : -1;
   stepperEnable(true);
-  if (isOn && hmmpr != 0) {
+  if (isOn && tmmpr != 0) {
     int posDiff = 0;
     do {
       noInterrupts();
       // Move by moveStep in the desired direction but stay in the thread by possibly traveling a little more.
-      spindlePos += ceil(MOTOR_STEPS * moveStep * 1.0 / LEAD_SCREW_HMM * STEPPER_TO_ENCODER_STEP_RATIO / ENCODER_STEPS / abs(hmmpr))
+      spindlePos += ceil(MOTOR_STEPS * moveStep * 1.0 / LEAD_SCREW_TMM * STEPPER_TO_ENCODER_STEP_RATIO / ENCODER_STEPS / abs(tmmpr))
                     * ENCODER_STEPS
                     * sign
-                    * (hmmpr > 0 ? 1 : -1);
+                    * (tmmpr > 0 ? 1 : -1);
       long newPos = posFromSpindle(spindlePos, true);
       interrupts();
       posDiff = abs(newPos - pos);
@@ -626,7 +668,7 @@ void checkMoveButtons() {
   } else {
     int delta = 0;
     do {
-      delta = moveStep * 1.0 / LEAD_SCREW_HMM * MOTOR_STEPS;
+      delta = moveStep * 1.0 / LEAD_SCREW_TMM * MOTOR_STEPS;
 
       // Don't left-right move out of stops.
       if (leftStop != LONG_MAX && pos + delta * sign > leftStop) {
@@ -637,7 +679,7 @@ void checkMoveButtons() {
 
       step(left, abs(delta));
 
-      if (moveStep != MOVE_STEP_1) {
+      if (moveStep != moveStepTable[0][0]) {
         // Allow some time for the button to be released to
         // make it possible to do single steps at 0.1 and 0.01mm.
         updateDisplay();
@@ -665,26 +707,39 @@ void checkDisplayButton(int button) {
   }
 }
 
+
+
 void checkMoveStepButton(int button) {
   if (button == B_F2 && checkAndMarkButtonTime()) {
-    if (moveStep == 0) {
-      moveStep = MOVE_STEP_1;
-    } else if (moveStep == MOVE_STEP_1) {
-      moveStep = MOVE_STEP_2;
-    } else if (moveStep == MOVE_STEP_2) {
-      moveStep = MOVE_STEP_3;
-    } else {
-      moveStep = MOVE_STEP_1;
-    }
+	moveStepTableIdx = (moveStepTableIdx + 1) % 3;
+	moveStep = moveStepTable[unitModeIdx][moveStepTableIdx];
+  }
+}
+
+// Checks if one of the pitch change button was pressed.
+void checkPitchButton(int button) {
+  if (button == B_F3 && checkAndMarkButtonTime()) {
+    int pitchCount = sizeof(pitchTable[unitModeIdx]) / sizeof(int);
+    pitchTableIdx = (pitchTableIdx + 1) % pitchCount; // increment and prevent overflow
+    if(pitchTable[unitModeIdx][pitchTableIdx] == 0) pitchTableIdx = 0;  //if past the end of the table values, goto 0
+    setTmmpr(pitchTable[unitModeIdx][pitchTableIdx]);
+  }
+}
+
+void checkModeButton(int button) {
+  if (button == B_F5 && checkAndMarkButtonTime()) {
+	unitModeIdx = (unitModeIdx + 1) %3;
+  moveStepTableIdx = 0; //set the move step size to the smallest value
+  moveStep = moveStepTable[unitModeIdx][moveStepTableIdx];
   }
 }
 
 // Checks if one of the pitch shortcut buttons were pressed.
-void checkPitchShortcutButton(int button, int bConst, int pitch) {
-  if (button == bConst && checkAndMarkButtonTime()) {
-    setHmmpr(pitch);
-  }
-}
+//void checkPitchShortcutButton(int button, int bConst, int pitch) {
+//  if (button == bConst && checkAndMarkButtonTime()) {
+//    setTmmpr(pitch);
+//  }
+//}
 
 int getAnalogButton() {
   int value = analogRead(A6);
@@ -710,9 +765,10 @@ void secondaryWork() {
   int button = getAnalogButton();
   checkDisplayButton(button);
   checkMoveStepButton(button);
-  checkPitchShortcutButton(button, B_F3, F3_PITCH);
-  checkPitchShortcutButton(button, B_F4, F4_PITCH);
-  checkPitchShortcutButton(button, B_F5, F5_PITCH);
+  //checkPitchShortcutButton(button, B_F3, F3_PITCH);
+  checkPitchButton(button);
+  //checkPitchShortcutButton(button, B_F4, F4_PITCH);
+  checkModeButton(button);
 
   if (loopCounter % 8 == 0) {
     // This takes a really long time.
@@ -767,7 +823,7 @@ long step(bool dir, long steps) {
 
 // Calculates stepper position from spindle position.
 long posFromSpindle(long s, bool respectStops) {
-  long newPos = s * ENCODER_TO_STEPPER_STEP_RATIO * hmmpr;
+  long newPos = s * ENCODER_TO_STEPPER_STEP_RATIO * tmmpr;
 
   // Respect left/right stops.
   if (respectStops) {
@@ -783,7 +839,7 @@ long posFromSpindle(long s, bool respectStops) {
 
 // Calculates spindle position from stepper position.
 long spindleFromPos(long p) {
-  return p * STEPPER_TO_ENCODER_STEP_RATIO / hmmpr;
+  return p * STEPPER_TO_ENCODER_STEP_RATIO / tmmpr;
 }
 
 void stepperEnable(bool value) {
@@ -835,11 +891,11 @@ void nonTestLoop() {
   // This allows to avoid waiting when spindle direction reverses
   // and reduces the chance of the skipped stepper steps since
   // after a reverse the spindle starts slow.
-  if (hmmpr != 0) {
+  if (tmmpr != 0) {
     noInterrupts();
     if (rightStop != LONG_MIN && pos == rightStop) {
       long stopSpindlePos = spindleFromPos(rightStop);
-      if (hmmpr > 0) {
+      if (tmmpr > 0) {
         if (spindlePos < stopSpindlePos - ENCODER_STEPS) {
           spindlePos += ENCODER_STEPS;
         }
@@ -850,7 +906,7 @@ void nonTestLoop() {
       }
     } else if (leftStop != LONG_MAX && pos == leftStop) {
       long stopSpindlePos = spindleFromPos(leftStop);
-      if (hmmpr > 0) {
+      if (tmmpr > 0) {
         if (spindlePos > stopSpindlePos + ENCODER_STEPS) {
           spindlePos -= ENCODER_STEPS;
         }
@@ -869,8 +925,8 @@ void nonTestLoop() {
     if (loopCounter % LOOP_COUNTER_MAX == 0) {
       Serial.print("pos ");
       Serial.print(pos);
-      Serial.print(" hmmpr ");
-      Serial.print(hmmpr);
+      Serial.print(" tmmpr ");
+      Serial.print(tmmpr);
       Serial.print(" leftStop ");
       Serial.print(leftStop == LONG_MAX ? "-" : String(leftStop));
       Serial.print(" rightStop ");
