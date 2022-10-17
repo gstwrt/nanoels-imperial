@@ -193,7 +193,7 @@ byte pitchTableIdx=0;
 byte moveStepTableIdx=0;
 
 //list of commonly used pitches  if list is less than the array size, end with a 0
-const int pitchTable[MODECOUNT][7] = {{100,1000,2000,0}, {25,254,1270,2540,0}, {3175, 2540,2117,1814,1587,1411, 1270}}; //0.1mm, 1mm, 2mm  / 0.005, 0.01", .05, .1" / 8,10,12,14,16,18,20 tpi
+const int pitchTable[MODECOUNT][7] = {{100,1000,2000,0}, {25,254,1270,2540,0}, {3175, 2540,2116,1814,1587,1411, 1270}}; //0.1mm, 1mm, 2mm  / 0.005, 0.01", .05, .1" / 8,10,12,14,16,18,20 tpi
 const int moveStepTable[MODECOUNT][3] ={{10,100,1000}, {25,254,1270}, {25,254,1270}};  //0.01, 0.1, 1.0mm / ~ 0.001, 0.01, 0.05in
 const char *showUnit[MODECOUNT] = {"mm", "\"" , "\""};
 const char *pitchUnit[MODECOUNT] = {"mm", "\"" , "tpi"};
@@ -550,21 +550,20 @@ void checkPlusMinusButtons() {
 
   // Speed up scrolling when needed.
   int delta=0;
+  int tpi = 0;
   if (unitMode == UNIT_MM) delta = abs(tmmprPrevious - tmmpr) >= 1000 ? 1000 : 10; //mm
   else if (unitMode == UNIT_IN) delta = abs(tmmprPrevious - tmmpr) >= 1270 ? 1270 : 25; //in
-  else {// tpi
-    if (minus ){
-      int tpi = (25400/tmmpr) +1;
-      if (tpi <= 0 && tpi >-3) tpi=3;
-      delta =  abs((25400/ tpi) - tmmpr);
+  else if (unitMode == UNIT_TPI){// tpi
+    tpi = (25400/tmmpr);
+    if (minus && checkAndMarkButtonTime()){
+      tpi--;
+      if (tpi >= 0 && tpi <= 3) tpi=-3;
     }
-    if (plus ){
-      int tpi = (25400/tmmpr) -1;
-      
-      if (tpi < 3) tpi=-3;
-      //Serial.println(tpi);
-      delta =  tmmpr -(25400/ tpi);
+    if (plus && checkAndMarkButtonTime()){
+      tpi++;
+      if (tpi <=0 && tpi >= -3) tpi=3;
     }
+    setTmmpr(25400/tpi);
   } 
 
   if (minus && checkAndMarkButtonTime()) {
