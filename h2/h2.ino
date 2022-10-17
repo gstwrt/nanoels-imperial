@@ -5,7 +5,7 @@
 // Define your hardware parameters here. Don't remove the ".0" at the end.
 #define ENCODER_STEPS 600.0 // 600 step spindle optical rotary encoder
 #define MOTOR_STEPS 400.0
-#define LEAD_SCREW_TMM 2000.0 // 2mm lead screw
+#define LEAD_SCREW_TMM 2000.0 // 2mm lead screw   thousandths of mm
 
 // Spindle rotary encoder pins. Nano only supports interrupts on D2 and D3.
 // Swap values if the rotation direction is wrong.
@@ -52,7 +52,7 @@
 
 // Version of the EEPROM storage format, should be changed when non-backward-compatible
 // changes are made to the storage logic, resulting in EEPROM wipe on first start.
-#define EEPROM_VERSION 1
+#define EEPROM_VERSION 2
 
 // To be incremented whenever a measurable improvement is made.
 #define SOFTWARE_VERSION 2
@@ -96,8 +96,9 @@
 #define ADDR_SHOW_ANGLE 22 // takes 1 byte
 #define ADDR_SHOW_TACHO 23 // takes 1 byte
 #define ADDR_MOVE_STEP 24 // takes 2 bytes
-#define ADDR_UNIT_MODE 26 // takes 2 bytes
+#define ADDR_UNIT_MODE 26 // takes 1 bytes
 
+#define MODECOUNT 3
 #define UNIT_MM 0
 #define UNIT_IN 1
 #define UNIT_TPI 2
@@ -106,10 +107,10 @@
 #define RPM_BULK ENCODER_STEPS
 
 // Uncomment to print out debug info in Serial.
-//#define DEBUG
+#define DEBUG
 
 // Uncomment to run the self-test of the code instead of the actual program.
-// #define TEST
+//#define TEST
 #ifdef TEST
 bool mockDigitalPins[20] = {0};
 int mockDigitalPinToggleOnRead = -1;
@@ -186,17 +187,18 @@ int shownRpm = 0;
 int moveStep = 0; // hundredth of a mm
 int savedMoveStep = 0; // moveStep saved in EEPROM
 
-int unitModeIdx = 0;
-int pitchTableIdx=0;
-int moveStepTableIdx=0;
+byte unitMode = UNIT_MM;
+byte savedUnitMode = UNIT_MM; // unitMode
+byte pitchTableIdx=0;
+byte moveStepTableIdx=0;
 
 //list of commonly used pitches  if list is less than the array size, end with a 0
-const int pitchTable[3][7] = {{100,1000,2000,0}, {13,254,1270,2540,0}, {3175, 2540,2117,1814,1587,1411, 1270}}; //0.1mm, 1mm, 2mm  / 0.005, 0.01", .05, .1" / 8,10,12,14,16,18,20 tpi
-const int moveStepTable[3][3] ={{10,100,1000}, {13,254,1270}, {13,254,1270}};  //0.01, 0.1, 1.0mm / ~ 0.05in
-const char *showUnit[3] = {"mm", "\"" , "\""};
-const char *pitchUnit[3] = {"mm", "\"" , "tpi"};
-const int unitDiv[3] = {1000,25400,25400};
-const int decimals[3] = {2,3,3};
+const int pitchTable[MODECOUNT][7] = {{100,1000,2000,0}, {25,254,1270,2540,0}, {3175, 2540,2117,1814,1587,1411, 1270}}; //0.1mm, 1mm, 2mm  / 0.005, 0.01", .05, .1" / 8,10,12,14,16,18,20 tpi
+const int moveStepTable[MODECOUNT][3] ={{10,100,1000}, {25,254,1270}, {25,254,1270}};  //0.01, 0.1, 1.0mm / ~ 0.001, 0.01, 0.05in
+const char *showUnit[MODECOUNT] = {"mm", "\"" , "\""};
+const char *pitchUnit[MODECOUNT] = {"mm", "\"" , "tpi"};
+const int unitDiv[MODECOUNT] = {1000,25400,25400};
+const int decimals[MODECOUNT] = {2,3,3};
 
 
 int getApproxRpm() {
@@ -217,7 +219,7 @@ void updateDisplay() {
   int rpm = getApproxRpm();
   long newLcdHash = (showAngle ? spindlePos : 0) + pos * 2 + tmmpr * 3 + isOn * 4 + leftStop / 5
                     + rightStop / 6 + spindlePosSync * 7 + resetOnStartup * 8 + showAngle * 9
-                    + showTacho * 10 + moveStep * 11 + rpm * 12 + unitModeIdx * 13;
+                    + showTacho * 10 + moveStep * 11 + rpm * 12 + unitMode * 13;
   if (newLcdHash == lcdHash) {
     return;
   }
@@ -231,8 +233,8 @@ void updateDisplay() {
  
   //if (moveStep != MOVE_STEP_1) {
     lcd.print(" Step: ");
-    lcd.print(moveStep * 1.0 / unitDiv[unitModeIdx], decimals[unitModeIdx]);
-    lcd.print(showUnit[unitModeIdx]);
+    lcd.print(moveStep * 1.0 / unitDiv[unitMode], decimals[unitMode]);
+    lcd.print(showUnit[unitMode]);
   //}
   if (spindlePosSync) {
     lcd.print(" SYN");
@@ -252,19 +254,20 @@ void updateDisplay() {
   // Second row.
   lcd.setCursor(0, 1);
   lcd.print("Pitch:    ");
-  if(unitModeIdx == UNIT_MM || unitModeIdx == UNIT_IN){
-    lcd.print(tmmpr * 1.0 / unitDiv[unitModeIdx], decimals[unitModeIdx]);
-  }
-  else { //tpi
+  if(unitMode == UNIT_TPI){ //tpi
     lcd.print(25400 / (tmmpr * 1.0), 1);
   }
-  lcd.print(pitchUnit[unitModeIdx]);
+  else {//in, mm, tmppr
+    lcd.print(tmmpr * 1.0 / unitDiv[unitMode], decimals[unitMode]);
+  }
+  
+  lcd.print(pitchUnit[unitMode]);
 
   // Third row.
   lcd.setCursor(0, 2);
   lcd.print("Position: ");
-  lcd.print(pos * LEAD_SCREW_TMM / MOTOR_STEPS / unitDiv[unitModeIdx], decimals[unitModeIdx]);
-  lcd.print(showUnit[unitModeIdx]);
+  lcd.print(pos * LEAD_SCREW_TMM / MOTOR_STEPS / unitDiv[unitMode], decimals[unitMode]);
+  lcd.print(showUnit[unitMode]);
 
   // Fourth row.
   lcd.setCursor(0, 3);
@@ -389,7 +392,7 @@ void setup() {
     saveLong(ADDR_LEFT_STOP, savedLeftStop = leftStop = LONG_MAX);
     saveLong(ADDR_RIGHT_STOP, savedRightStop = rightStop = LONG_MIN);
     saveInt(ADDR_MOVE_STEP, moveStepTable[UNIT_MM][0]);
-    saveInt(ADDR_UNIT_MODE, UNIT_MM);
+    EEPROM.write(ADDR_UNIT_MODE, UNIT_MM);
   }
 
   isOn = EEPROM.read(ADDR_ONOFF) == 1;
@@ -402,7 +405,7 @@ void setup() {
   savedShowAngle = showAngle = EEPROM.read(ADDR_SHOW_ANGLE) == 1;
   savedShowTacho = showTacho = EEPROM.read(ADDR_SHOW_TACHO) == 1;
   savedMoveStep = moveStep = loadInt(ADDR_MOVE_STEP);
-  //savedUnitMode = unitModeIdx = loadInt(ADDR_UNIT_MODE);
+  savedUnitMode = unitMode = EEPROM.read(ADDR_UNIT_MODE);
 
   stepperEnable(isOn);
 
@@ -464,6 +467,9 @@ void saveIfChanged() {
   if (moveStep != savedMoveStep) {
     saveInt(ADDR_MOVE_STEP, savedMoveStep = moveStep);
   }
+  if (unitMode != savedUnitMode) {
+    EEPROM.write(ADDR_UNIT_MODE, savedUnitMode = unitMode);
+  }  
 }
 
 // Checks if some button was recently pressed. Returns true if not.
@@ -518,7 +524,7 @@ void reset() {
   leftStop = LONG_MAX;
   rightStop = LONG_MIN;
   setTmmpr(0);
-  moveStep = moveStepTable[0][0];
+  moveStep = moveStepTable[UNIT_MM][0];
   //splashScreen();
 }
 
@@ -544,8 +550,8 @@ void checkPlusMinusButtons() {
 
   // Speed up scrolling when needed.
   int delta=0;
-  if (unitModeIdx == UNIT_MM) delta = abs(tmmprPrevious - tmmpr) >= 1000 ? 1000 : 10; //mm
-  else if (unitModeIdx == UNIT_IN) delta = abs(tmmprPrevious - tmmpr) >= 1270 ? 1270 : 25; //in
+  if (unitMode == UNIT_MM) delta = abs(tmmprPrevious - tmmpr) >= 1000 ? 1000 : 10; //mm
+  else if (unitMode == UNIT_IN) delta = abs(tmmprPrevious - tmmpr) >= 1270 ? 1270 : 25; //in
   else {// tpi
     if (minus ){
       int tpi = (25400/tmmpr) +1;
@@ -679,9 +685,9 @@ void checkMoveButtons() {
 
       step(left, abs(delta));
 
-      if (moveStep != moveStepTable[0][0]) {
+      if (moveStep != moveStepTable[unitMode][0]) {
         // Allow some time for the button to be released to
-        // make it possible to do single steps at 0.1 and 0.01mm.
+        // make it possible to do single steps at smallest measure.
         updateDisplay();
         delay(500);
       }
@@ -712,25 +718,25 @@ void checkDisplayButton(int button) {
 void checkMoveStepButton(int button) {
   if (button == B_F2 && checkAndMarkButtonTime()) {
 	moveStepTableIdx = (moveStepTableIdx + 1) % 3;
-	moveStep = moveStepTable[unitModeIdx][moveStepTableIdx];
+	moveStep = moveStepTable[unitMode][moveStepTableIdx];
   }
 }
 
 // Checks if one of the pitch change button was pressed.
 void checkPitchButton(int button) {
   if (button == B_F3 && checkAndMarkButtonTime()) {
-    int pitchCount = sizeof(pitchTable[unitModeIdx]) / sizeof(int);
+    int pitchCount = sizeof(pitchTable[unitMode]) / sizeof(int);
     pitchTableIdx = (pitchTableIdx + 1) % pitchCount; // increment and prevent overflow
-    if(pitchTable[unitModeIdx][pitchTableIdx] == 0) pitchTableIdx = 0;  //if past the end of the table values, goto 0
-    setTmmpr(pitchTable[unitModeIdx][pitchTableIdx]);
+    if(pitchTable[unitMode][pitchTableIdx] == 0) pitchTableIdx = 0;  //if past the end of the table values, goto 0
+    setTmmpr(pitchTable[unitMode][pitchTableIdx]);
   }
 }
 
 void checkModeButton(int button) {
   if (button == B_F5 && checkAndMarkButtonTime()) {
-	unitModeIdx = (unitModeIdx + 1) %3;
-  moveStepTableIdx = 0; //set the move step size to the smallest value
-  moveStep = moveStepTable[unitModeIdx][moveStepTableIdx];
+	unitMode = (unitMode + 1) % MODECOUNT;
+	//moveStepTableIdx = 0; //set the move step size to the smallest value
+	moveStep = moveStepTable[unitMode][moveStepTableIdx];
   }
 }
 
@@ -743,7 +749,7 @@ void checkModeButton(int button) {
 
 int getAnalogButton() {
   int value = analogRead(A6);
-  // Serial.println(value);
+   //Serial.println(value);
   if ((F1_VOLTAGE + BUTTON_EPSILON > value) && (F1_VOLTAGE - BUTTON_EPSILON < value)) {
     return B_F1;
   } else if ((F2_VOLTAGE + BUTTON_EPSILON > value) && (F2_VOLTAGE - BUTTON_EPSILON < value)) {
@@ -765,7 +771,6 @@ void secondaryWork() {
   int button = getAnalogButton();
   checkDisplayButton(button);
   checkMoveStepButton(button);
-  //checkPitchShortcutButton(button, B_F3, F3_PITCH);
   checkPitchButton(button);
   //checkPitchShortcutButton(button, B_F4, F4_PITCH);
   checkModeButton(button);
