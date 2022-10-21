@@ -192,8 +192,8 @@ byte savedUnitMode = UNIT_MM; // unitMode
 byte pitchTableIdx=0;
 byte moveStepTableIdx=0;
 
-//list of commonly used pitches  if list is less than the array size, end with a 0
-const int pitchTable[MODECOUNT][7] = {{100,1000,2000,0}, {25,254,1270,2540,0}, {3175, 2540,2116,1814,1587,1411, 1270}}; //0.1mm, 1mm, 2mm  / 0.005, 0.01", .05, .1" / 8,10,12,14,16,18,20 tpi
+//list of commonly used pitches.  If list is less than the array size, end with a 0
+const int pitchTable[MODECOUNT][8] = {{100,500,1000,2000,0}, {25,254,1270,2540,0}, {2540,2116,1954,1814,1587,1411,1270, 1058}}; //0.1mm, 0.5, 1mm, 2mm  / 0.005, 0.01", .05, .1" / 10,12,13,14,16,18,20,24 tpi
 const int moveStepTable[MODECOUNT][3] ={{10,100,1000}, {25,254,1270}, {25,254,1270}};  //0.01, 0.1, 1.0mm / ~ 0.001, 0.01, 0.05in
 const char *showUnit[MODECOUNT] = {"mm", "\"" , "\""};
 const char *pitchUnit[MODECOUNT] = {"mm", "\"" , "tpi"};
