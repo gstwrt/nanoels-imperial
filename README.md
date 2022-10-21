@@ -5,6 +5,8 @@
 
 # NanoEls
 
+This is a modified version of nanoELS with support for inch measurements and tpi pitch.  Only H2 has been modified.  Tests are not yet implemented.
+
 Cheap DIY Electronic Lead Screw (ELS) based on Arduino Nano for metal lathes.
 
 There are 2 hardware versions of NanoEls, [H1](https://github.com/kachurovskiy/nanoels/blob/main/h1/) is older, [H2 is newer](https://github.com/kachurovskiy/nanoels/blob/main/h2/) and more capable.

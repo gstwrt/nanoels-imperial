@@ -107,7 +107,7 @@
 #define RPM_BULK ENCODER_STEPS
 
 // Uncomment to print out debug info in Serial.
-#define DEBUG
+//#define DEBUG
 
 // Uncomment to run the self-test of the code instead of the actual program.
 //#define TEST
@@ -255,9 +255,9 @@ void updateDisplay() {
   lcd.setCursor(0, 1);
   lcd.print("Pitch:    ");
   if(unitMode == UNIT_TPI){ //tpi
-    lcd.print(25400 / (tmmpr * 1.0), 1);
+    lcd.print(25400 / (tmmpr*1.0), 1);
   }
-  else {//in, mm, tmppr
+  else {//in, mm
     lcd.print(tmmpr * 1.0 / unitDiv[unitMode], decimals[unitMode]);
   }
   
@@ -473,6 +473,7 @@ void saveIfChanged() {
 }
 
 // Checks if some button was recently pressed. Returns true if not.
+//Returns true if more than 300ms passed since last call
 bool checkAndMarkButtonTime() {
   if (millis() > buttonTime + 300) {
     buttonTime = millis();
@@ -507,17 +508,17 @@ void setTmmpr(int value) {
 
 
 //no longer used as version info moved to main screen when mode rpm and angle are both off
-void splashScreen() {
-#ifndef TEST
-  lcd.clear();
-  lcd.setCursor(6, 1);
-  lcd.print("NanoEls");
-  lcd.setCursor(6, 2);
-  lcd.print("H" + String(HARDWARE_VERSION) + " V" + String(SOFTWARE_VERSION));
-  lcdHash = 0;
-  delay(2000);
-#endif
-}
+//void splashScreen() {
+//#ifndef TEST
+//  lcd.clear();
+//  lcd.setCursor(6, 1);
+//  lcd.print("NanoEls");
+//  lcd.setCursor(6, 2);
+//  lcd.print("H" + String(HARDWARE_VERSION) + " V" + String(SOFTWARE_VERSION));
+//  lcdHash = 0;
+//  delay(2000);
+//#endif
+//}
 
 void reset() {
   resetOnStartup = false;
@@ -553,17 +554,19 @@ void checkPlusMinusButtons() {
   int tpi = 0;
   if (unitMode == UNIT_MM) delta = abs(tmmprPrevious - tmmpr) >= 1000 ? 1000 : 10; //mm
   else if (unitMode == UNIT_IN) delta = abs(tmmprPrevious - tmmpr) >= 1270 ? 1270 : 25; //in
-  else if (unitMode == UNIT_TPI){// tpi
+  else if (unitMode == UNIT_TPI && (plus || minus)){// tpi
     tpi = (25400/tmmpr);
     if (minus && checkAndMarkButtonTime()){
       tpi--;
       if (tpi >= 0 && tpi <= 3) tpi=-3;
+      setTmmpr(25400/tpi);
     }
     if (plus && checkAndMarkButtonTime()){
       tpi++;
       if (tpi <=0 && tpi >= -3) tpi=3;
+      setTmmpr(25400/tpi);
     }
-    setTmmpr(25400/tpi);
+    
   } 
 
   if (minus && checkAndMarkButtonTime()) {
@@ -699,44 +702,43 @@ void checkMoveButtons() {
   stepperEnable(false);
 }
 
-void checkDisplayButton(int button) {
-  if (button == B_F1 && checkAndMarkButtonTime()) {
-    if (!showAngle && !showTacho) {
-      showAngle = true;
-    } else if (showAngle) {
-      showAngle = false;
-      showTacho = true;
-    } else {
-      showTacho = false;
-    }
+void doDisplayButton() {
+  if (!showAngle && !showTacho) {
+    showAngle = true;
+  } else if (showAngle) {
+    showAngle = false;
+    showTacho = true;
+  } else {
+    showTacho = false;
   }
 }
 
 
-
-void checkMoveStepButton(int button) {
-  if (button == B_F2 && checkAndMarkButtonTime()) {
+void doMoveStepButton() {
 	moveStepTableIdx = (moveStepTableIdx + 1) % 3;
 	moveStep = moveStepTable[unitMode][moveStepTableIdx];
-  }
 }
 
-// Checks if one of the pitch change button was pressed.
-void checkPitchButton(int button) {
-  if (button == B_F3 && checkAndMarkButtonTime()) {
-    int pitchCount = sizeof(pitchTable[unitMode]) / sizeof(int);
-    pitchTableIdx = (pitchTableIdx + 1) % pitchCount; // increment and prevent overflow
-    if(pitchTable[unitMode][pitchTableIdx] == 0) pitchTableIdx = 0;  //if past the end of the table values, goto 0
-    setTmmpr(pitchTable[unitMode][pitchTableIdx]);
-  }
+
+void doPitchButton() {
+  int pitchCount = sizeof(pitchTable[unitMode]) / sizeof(int);
+  pitchTableIdx = (pitchTableIdx + 1) % pitchCount; // cycle through pitch table
+  if(pitchTable[unitMode][pitchTableIdx] == 0) pitchTableIdx = 0;  //if past the end of the table values, goto index 0
+  setTmmpr(pitchTable[unitMode][pitchTableIdx]);
 }
 
-void checkModeButton(int button) {
-  if (button == B_F5 && checkAndMarkButtonTime()) {
-	unitMode = (unitMode + 1) % MODECOUNT;
-	//moveStepTableIdx = 0; //set the move step size to the smallest value
+void doModeButton() {
+	unitMode = (unitMode + 1) % MODECOUNT; //cycle through the unit modes
 	moveStep = moveStepTable[unitMode][moveStepTableIdx];
-  }
+}
+
+void doDebugButton() {
+	Serial.print("MoveStep=");
+  Serial.print(moveStep);
+  Serial.print(" pos=");
+  Serial.print(pos);
+  Serial.print(" tmmpr=");
+  Serial.println(tmmpr);
 }
 
 // Checks if one of the pitch shortcut buttons were pressed.
@@ -768,14 +770,13 @@ int getAnalogButton() {
 // lead screw is ON and stepper has to run in a few milliseconds.
 void secondaryWork() {
   int button = getAnalogButton();
-  checkDisplayButton(button);
-  checkMoveStepButton(button);
-  checkPitchButton(button);
-  //checkPitchShortcutButton(button, B_F4, F4_PITCH);
-  checkModeButton(button);
+  if (button == B_F1 && checkAndMarkButtonTime()){ doDisplayButton();}
+  if (button == B_F2 && checkAndMarkButtonTime()){ doMoveStepButton();}
+  if (button == B_F3 && checkAndMarkButtonTime()){ doPitchButton();}
+  if (button == B_F4 && checkAndMarkButtonTime()){ doModeButton();}
+  //if (button == B_F5 && checkAndMarkButtonTime()){ doDebugButton();}
 
-  if (loopCounter % 8 == 0) {
-    // This takes a really long time.
+  if (loopCounter % 8 == 0) {   // This takes a really long time.
     updateDisplay();
   }
   if (loopCounter % 137 == 0) {
